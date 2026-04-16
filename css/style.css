@@ -1,0 +1,313 @@
+/* style.css — Font to Label Maker Converter */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0d0d1a;
+  --surface:   #161628;
+  --surface2:  #1e1e35;
+  --border:    #2a2a4a;
+  --accent:    #00d4ff;
+  --accent2:   #7c5cbf;
+  --danger:    #ff6b6b;
+  --text:      #e8e8f0;
+  --text-dim:  #888;
+  --tape:      #f5f0e8;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+a { color: var(--accent); }
+
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
+
+.app-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.app-header h1 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  letter-spacing: .5px;
+  color: var(--accent);
+}
+.app-header p {
+  color: var(--text-dim);
+  font-size: .85rem;
+}
+.header-logo {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.app-body {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.step-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.step-card-header {
+  background: var(--surface2);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.step-badge {
+  background: var(--accent2);
+  color: #fff;
+  font-size: .75rem;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 20px;
+}
+.step-card-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.step-card-header span.sub {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: .82rem;
+}
+.step-body { padding: 20px; }
+
+/* ── Step 1 — Upload ─────────────────────────────────────────────────────────── */
+
+#drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 36px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+}
+#drop-zone:hover, #drop-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(0,212,255,.05);
+}
+#drop-zone .icon { font-size: 2.5rem; margin-bottom: 8px; }
+#drop-zone p { color: var(--text-dim); margin-bottom: 6px; }
+#drop-zone p strong { color: var(--text); }
+#drop-zone .hint { font-size: .78rem; color: var(--text-dim); margin-top: 6px; }
+#file-input { display: none; }
+
+#font-status {
+  margin-top: 12px;
+  font-size: .85rem;
+  color: var(--text-dim);
+}
+#font-status.loaded { color: #4ade80; }
+
+#loading-bar-wrap {
+  margin-top: 10px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#loading-bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  display: none;
+  transition: width .1s linear;
+  border-radius: 2px;
+}
+
+/* ── Step 2 — Character Grid ─────────────────────────────────────────────────── */
+
+#char-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.char-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  width: 68px;
+}
+.char-tile:hover     { border-color: var(--accent2); background: rgba(124,92,191,.1); }
+.char-tile.active    { border-color: var(--accent); background: rgba(0,212,255,.1); }
+.char-tile.modified  { border-color: #ffd700; }
+
+.char-label {
+  font-size: .65rem;
+  color: var(--text-dim);
+  text-align: center;
+  margin-bottom: 2px;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.char-tile canvas {
+  border-radius: 4px;
+  display: block;
+}
+
+/* ── Step 3 — Editor ─────────────────────────────────────────────────────────── */
+
+.editor-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.editor-canvases {
+  position: relative;
+  width: 280px;
+  height: 280px;
+}
+#glyph-canvas, #editor-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 280px;
+  height: 280px;
+  border-radius: 10px;
+}
+#glyph-canvas { border: 1px solid var(--border); }
+#editor-canvas {
+  cursor: crosshair;
+  border: 1px solid var(--border);
+}
+
+.editor-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.editor-controls h3 { font-size: .95rem; color: var(--text-dim); }
+#editor-char-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: .82rem;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.btn:hover        { background: var(--surface2); border-color: var(--accent2); }
+.btn.active       { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.btn.btn-primary  { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
+.btn.btn-primary:hover { opacity: .85; }
+.btn.btn-danger   { border-color: var(--danger); }
+.btn.btn-danger:hover  { background: rgba(255,107,107,.15); }
+.btn:disabled     { opacity: .45; cursor: not-allowed; }
+
+.editor-help {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: .78rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.editor-help code {
+  background: rgba(255,255,255,.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+/* ── Step 4 — Preview ────────────────────────────────────────────────────────── */
+
+.preview-input-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.preview-input-row input {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 1rem;
+  font-family: monospace;
+  letter-spacing: 1px;
+  outline: none;
+  transition: border-color .15s;
+}
+.preview-input-row input:focus { border-color: var(--accent); }
+
+.preview-canvas-wrap {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid #d4c8b0;
+  background: var(--tape);
+}
+#preview-canvas { display: block; width: 100%; }
+
+/* ── Step 5 — Download ───────────────────────────────────────────────────────── */
+
+.download-section {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.download-section p {
+  color: var(--text-dim);
+  font-size: .88rem;
+  flex: 1;
+  min-width: 200px;
+}
+#btn-download {
+  padding: 12px 28px;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .editor-layout { grid-template-columns: 1fr; }
+  .editor-canvases { width: 100%; height: auto; aspect-ratio: 1; position: relative; }
+  #glyph-canvas, #editor-canvas { width: 100%; height: 100%; }
+  .char-tile { width: 58px; }
+}
