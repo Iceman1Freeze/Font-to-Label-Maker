@@ -89,7 +89,7 @@ const AUTO_CONVERT_INDICES = [
 ];
 
 // Render size for thinning (higher = better quality skeleton)
-const RENDER_SIZE = 40;
+const RENDER_SIZE = 64;
 
 function zhangSuenThinning(pixels, w, h) {
   const img = new Uint8Array(pixels);
@@ -280,25 +280,29 @@ function renderGlyphToPixels(font, char, size) {
     const bb = glyph.getBoundingBox();
     if (!bb || bb.x1 === bb.x2 || bb.y1 === bb.y2) return null;
 
-    const charW = bb.x2 - bb.x1;
-    const charH = bb.y2 - bb.y1;
-    const scale = (size * 0.85) / Math.max(charW, charH);
-    const ox = (size - charW * scale) / 2 - bb.x1 * scale;
-    const oy = (size - charH * scale) / 2 + bb.y2 * scale;
+    const bW = bb.x2 - bb.x1;
+    const bH = bb.y2 - bb.y1;
+    const s = (size * 0.85) / Math.max(bW, bH);
+    const ox = (size - bW * s) / 2 - bb.x1 * s;
+    const oy = (size - bH * s) / 2 + bb.y2 * s;
+    const fontSize = s * font.unitsPerEm;
 
     ctx.fillStyle = 'black';
-    const path = glyph.getPath(ox, oy, scale * font.unitsPerEm);
-    const p2d = new Path2D(path.toSVG());
-    ctx.fill(p2d);
+    // Use glyph.draw() — more reliable than Path2D(toSVG()) across browsers
+    glyph.draw(ctx, ox, oy, fontSize);
   } catch (e) {
+    console.warn('renderGlyphToPixels failed for', char, e);
     return null;
   }
 
   const imageData = ctx.getImageData(0, 0, size, size);
   const pixels = new Uint8Array(size * size);
+  let hasContent = false;
   for (let i = 0; i < size * size; i++) {
     pixels[i] = imageData.data[i * 4 + 3] > 64 ? 1 : 0;
+    if (pixels[i]) hasContent = true;
   }
+  if (!hasContent) return null;
   return { pixels, canvas };
 }
 
@@ -340,7 +344,7 @@ function convertFont(font) {
         result[idx] = vec;
       }
     } catch (e) {
-      // Fall back to default on any error
+      console.warn('convertFont failed for index', idx, '(', ch, '):', e);
     }
   }
 
