@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LabelMaker PRO Converter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
+<style>
+  body { font-family: Arial; background:#0b0b0b; color:white; text-align:center; }
+  canvas { background:white; margin-top:20px; }
+  input, button { margin:6px; padding:8px; }
+  textarea { width:95%; height:180px; margin-top:10px; }
+</style>
+</head>
+<body>
+
+<h1>LabelMaker PRO Font Converter</h1>
+
+<input type="file" id="fontUpload" accept=".ttf"><br>
+<input type="text" id="textInput" placeholder="TEXT"><br>
+
+<label>Grid:</label>
+<input type="number" id="grid" value="7">
+
+<label>Simplify:</label>
+<input type="range" id="simplify" min="0" max="5" value="2">
+
+<label>Curve:</label>
+<input type="range" id="curve" min="0" max="100" value="0">
+
+<button onclick="generate()">Generate</button>
+
+<canvas id="preview" width="800" height="300"></canvas>
+
+<h3>Arduino Output</h3>
+<textarea id="output"></textarea>
+
+<script>
+let font;
+
+fontUpload.onchange = e => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    font = opentype.parse(reader.result);
+    alert("Font ready");
+  };
+  reader.readAsArrayBuffer(e.target.files[0]);
+};
+
+function generate() {
+  if (!font) return alert("Upload font first");
+
+  const text = textInput.value;
+  const grid = +gridInput();
+  const simplifyLevel = +document.getElementById("simplify").value;
+  const curve = +document.getElementById("curve").value;
+
+  const ctx = preview.getContext("2d");
+  ctx.clearRect(0,0,preview.width,preview.height);
+
+  let all = [];
+
+  text.split("").forEach((char, i) => {
+    let path = font.getPath(char, 0, 0, 120);
+
+    let pts = flatten(path);
+    pts = simplify(pts, simplifyLevel);
+    pts = normalize(pts, grid);
+    pts = applyCurve(pts, i, text.length, curve);
+
+    draw(ctx, pts, i);
+
+    all.push(encode(pts));
+  });
+
+  output.value = format(all);
+}
+
+function gridInput(){ return document.getElementById("grid").value }
+
+// --- FLATTEN CURVES INTO POINTS ---
+function flatten(path) {
+  let pts = [];
+  path.commands.forEach(cmd => {
+    if (cmd.x !== undefined) pts.push({x:cmd.x, y:cmd.y});
+  });
+  return pts;
+}
+
+// --- SIMPLIFY (remove extra points) ---
+function simplify(points, level) {
+  return points.filter((_,i)=> i % (level+1) === 0);
+}
+
+// --- NORMALIZE ---
+function normalize(points, grid) {
+  let minX = Math.min(...points.map(p=>p.x));
+  let maxX = Math.max(...points.map(p=>p.x));
+  let minY = Math.min(...points.map(p=>p.y));
+  let maxY = Math.max(...points.map(p=>p.y));
+
+  return points.map(p=>({
+    x: Math.round((p.x-minX)/(maxX-minX)*(grid-1)),
+    y: Math.round((p.y-minY)/(maxY-minY)*(grid-1))
+  }));
+}
+
+// --- CURVE TEXT ---
+function applyCurve(points, index, total, curve) {
+  if (curve===0) return points;
+
+  return points.map(p=>{
+    let angle = (index-total/2)*(curve/200);
+    return {
+      x: p.x,
+      y: p.y + Math.sin(angle)*2
+    };
+  });
+}
+
+// --- ENCODE ---
+function encode(points) {
+  let v = [];
+  let last = null;
+
+  points.forEach(p=>{
+    if (!last || last.x!==p.x || last.y!==p.y) {
+      v.push(100 + p.x*10 + p.y);
+      last = p;
+    }
+  });
+
+  v.push(200);
+  return v;
+}
+
+// --- DRAW PREVIEW ---
+function draw(ctx, pts, i) {
+  ctx.beginPath();
+  pts.forEach((p,j)=>{
+    let x = 80*i + p.x*10;
+    let y = 250 - p.y*10;
+    if (j===0) ctx.moveTo(x,y);
+    else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+
+// --- FORMAT ---
+function format(chars) {
+  let s = "const uint8_t vector[][14] = {\n";
+  chars.forEach(c=>{
+    s += " {" + c.slice(0,14).join(",") + "},\n";
+  });
+  return s + "};";
+}
+
+</script>
+
+</body>
+</html>
