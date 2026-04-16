@@ -49,6 +49,13 @@ a { color: var(--accent); }
   font-size: 2rem;
   line-height: 1;
 }
+.header-version {
+  margin-left: auto;
+  font-size: .75rem;
+  color: var(--text-dim);
+  font-family: monospace;
+  letter-spacing: .5px;
+}
 
 .app-body {
   max-width: 1200px;
