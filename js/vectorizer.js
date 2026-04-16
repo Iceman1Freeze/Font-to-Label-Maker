@@ -79,132 +79,66 @@ const CHAR_LABELS = [
   '} 😊','~ 😮','$ ♥'
 ];
 
-// Chars we attempt to auto-convert from the TTF (others use defaults)
-const AUTO_CONVERT_INDICES = [
-  0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25, // A-Z
-  26,27,28,29,30,31,32,33,34,35, // 0-9
-  38, // /
-  42,43,44,45,46, // , - . ! ?
-  48,49,50,51,52,53,54,55,56,57,58,59, // ' & + : ; " # ( ) = @ *
-];
+// ── Outline-based conversion pipeline ────────────────────────────────────────
+// Samples the font's actual bezier curves directly — no rasterization/thinning.
 
-// Render size for thinning (higher = better quality skeleton)
-const RENDER_SIZE = 64;
-
-function zhangSuenThinning(pixels, w, h) {
-  const img = new Uint8Array(pixels);
-
-  const get = (x, y) => (x < 0 || x >= w || y < 0 || y >= h) ? 0 : (img[y * w + x] ? 1 : 0);
-
-  function neighbors(x, y) {
-    return [
-      get(x, y-1),   // P2 N
-      get(x+1, y-1), // P3 NE
-      get(x+1, y),   // P4 E
-      get(x+1, y+1), // P5 SE
-      get(x, y+1),   // P6 S
-      get(x-1, y+1), // P7 SW
-      get(x-1, y),   // P8 W
-      get(x-1, y-1)  // P9 NW
-    ];
+function sampleCubic(x0,y0, x1,y1, x2,y2, x3,y3, n) {
+  const pts = [];
+  for (let i = 1; i <= n; i++) {
+    const t = i/n, u = 1-t;
+    pts.push([
+      u*u*u*x0 + 3*u*u*t*x1 + 3*u*t*t*x2 + t*t*t*x3,
+      u*u*u*y0 + 3*u*u*t*y1 + 3*u*t*t*y2 + t*t*t*y3
+    ]);
   }
-
-  function B(n) { return n.reduce((a, v) => a + v, 0); }
-  function A(n) {
-    let c = 0;
-    for (let i = 0; i < 8; i++) if (n[i] === 0 && n[(i+1) % 8] === 1) c++;
-    return c;
-  }
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const del1 = [], del2 = [];
-
-    for (let y = 1; y < h-1; y++) {
-      for (let x = 1; x < w-1; x++) {
-        if (!img[y*w+x]) continue;
-        const n = neighbors(x, y);
-        const b = B(n), a = A(n);
-        // n[0]=P2, n[2]=P4, n[4]=P6, n[6]=P8
-        if (b >= 2 && b <= 6 && a === 1 && n[0]*n[2]*n[4] === 0 && n[2]*n[4]*n[6] === 0)
-          del1.push(y*w+x);
-      }
-    }
-    for (const i of del1) { img[i] = 0; changed = true; }
-
-    for (let y = 1; y < h-1; y++) {
-      for (let x = 1; x < w-1; x++) {
-        if (!img[y*w+x]) continue;
-        const n = neighbors(x, y);
-        const b = B(n), a = A(n);
-        if (b >= 2 && b <= 6 && a === 1 && n[0]*n[2]*n[6] === 0 && n[0]*n[4]*n[6] === 0)
-          del2.push(y*w+x);
-      }
-    }
-    for (const i of del2) { img[i] = 0; changed = true; }
-  }
-  return img;
+  return pts;
 }
 
-function tracePaths(skeleton, w, h) {
-  const get = (x, y) => (x < 0 || x >= w || y < 0 || y >= h) ? 0 : skeleton[y*w+x];
-  const visited = new Uint8Array(w * h);
-
-  function neighborCount(x, y) {
-    let c = 0;
-    for (let dy = -1; dy <= 1; dy++)
-      for (let dx = -1; dx <= 1; dx++)
-        if ((dx || dy) && get(x+dx, y+dy)) c++;
-    return c;
+function sampleQuad(x0,y0, x1,y1, x2,y2, n) {
+  const pts = [];
+  for (let i = 1; i <= n; i++) {
+    const t = i/n, u = 1-t;
+    pts.push([u*u*x0 + 2*u*t*x1 + t*t*x2, u*u*y0 + 2*u*t*y1 + t*t*y2]);
   }
+  return pts;
+}
 
-  // Collect all skeleton pixels; identify endpoints (1 neighbor)
-  const allPixels = [];
-  const endpoints = [];
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (skeleton[y*w+x]) {
-        allPixels.push([x, y]);
-        if (neighborCount(x, y) === 1) endpoints.push([x, y]);
+// Returns {contours, bb} where contours are arrays of [x,y] in font units.
+function getGlyphContours(font, char) {
+  try {
+    const glyph = font.charToGlyph(char);
+    if (!glyph || !glyph.path) return null;
+    const bb = glyph.getBoundingBox();
+    if (!bb || bb.x1 === bb.x2 || bb.y1 === bb.y2) return null;
+
+    const contours = [];
+    let cur = null, cx = 0, cy = 0;
+
+    for (const cmd of glyph.path.commands) {
+      switch (cmd.type) {
+        case 'M':
+          if (cur && cur.length > 1) contours.push(cur);
+          cur = [[cmd.x, cmd.y]]; cx = cmd.x; cy = cmd.y; break;
+        case 'L':
+          if (cur) cur.push([cmd.x, cmd.y]);
+          cx = cmd.x; cy = cmd.y; break;
+        case 'C':
+          if (cur) cur.push(...sampleCubic(cx,cy, cmd.x1,cmd.y1, cmd.x2,cmd.y2, cmd.x,cmd.y, 8));
+          cx = cmd.x; cy = cmd.y; break;
+        case 'Q':
+          if (cur) cur.push(...sampleQuad(cx,cy, cmd.x1,cmd.y1, cmd.x,cmd.y, 8));
+          cx = cmd.x; cy = cmd.y; break;
+        case 'Z':
+          if (cur && cur.length > 1) { cur.push(cur[0]); contours.push(cur); }
+          cur = null; cx = 0; cy = 0; break;
       }
     }
+    if (cur && cur.length > 1) contours.push(cur);
+
+    return contours.length > 0 ? { contours, bb } : null;
+  } catch (e) {
+    return null;
   }
-  if (!allPixels.length) return [];
-  if (!endpoints.length) endpoints.push(allPixels[0]);
-
-  const paths = [];
-
-  function traceFrom(sx, sy) {
-    if (visited[sy*w+sx]) return;
-    const path = [[sx, sy]];
-    visited[sy*w+sx] = 1;
-    let cx = sx, cy = sy;
-
-    while (true) {
-      let found = false;
-      // Prefer straight paths (check cardinal directions first, then diagonals)
-      const dirs = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,-1],[-1,1],[1,1]];
-      for (const [dx, dy] of dirs) {
-        const nx = cx+dx, ny = cy+dy;
-        if (get(nx, ny) && !visited[ny*w+nx]) {
-          visited[ny*w+nx] = 1;
-          path.push([nx, ny]);
-          cx = nx; cy = ny;
-          found = true;
-          break;
-        }
-      }
-      if (!found) break;
-    }
-    if (path.length > 0) paths.push(path);
-  }
-
-  for (const [x, y] of endpoints) traceFrom(x, y);
-  // Catch any unvisited pixels (disconnected strokes)
-  for (const [x, y] of allPixels) traceFrom(x, y);
-
-  return paths;
 }
 
 function douglasPeucker(pts, eps) {
@@ -226,129 +160,82 @@ function douglasPeucker(pts, eps) {
   return [pts[0], pts[pts.length-1]];
 }
 
-function pixelToGrid(px, py, size) {
-  return {
-    x: Math.min(4, Math.max(0, Math.round(px / (size-1) * 4))),
-    y: Math.min(4, Math.max(0, 4 - Math.round(py / (size-1) * 4))) // flip Y
-  };
-}
+// Converts font-unit contours to a 14-entry vector array (5×5 grid).
+function encodeContoursToVector(contours, bb) {
+  const GRID = 4;
+  const bW = bb.x2 - bb.x1;
+  const bH = bb.y2 - bb.y1;
+  const span = Math.max(bW, bH);
 
-function encodePathsToVector(paths, size) {
-  const entries = [];
-
-  for (const path of paths) {
-    if (!path.length) continue;
-
-    // Simplify path with Douglas-Peucker (epsilon = 1 pixel)
-    const simplified = douglasPeucker(path, 1.0);
-
-    // Map to 0-4 grid
-    const gridPts = simplified.map(([px, py]) => pixelToGrid(px, py, size));
-
-    // Deduplicate consecutive identical points
-    const deduped = [gridPts[0]];
-    for (let i = 1; i < gridPts.length; i++) {
-      const prev = deduped[deduped.length-1];
-      if (gridPts[i].x !== prev.x || gridPts[i].y !== prev.y)
-        deduped.push(gridPts[i]);
-    }
-
-    if (!deduped.length) continue;
-
-    // First point = move (no draw)
-    entries.push(deduped[0].x * 10 + deduped[0].y);
-
-    for (let i = 1; i < deduped.length; i++) {
-      entries.push(100 + deduped[i].x * 10 + deduped[i].y);
-    }
+  function norm(x, y) {
+    return {
+      x: Math.min(GRID, Math.max(0, Math.round((x - bb.x1) / span * GRID))),
+      y: Math.min(GRID, Math.max(0, Math.round((bb.y2 - y) / span * GRID))) // flip Y
+    };
   }
 
-  // Trim to 14, pad with 200
+  // Longest contour first (outer outline)
+  const sorted = [...contours].sort((a, b) => b.length - a.length);
+  const entries = [];
+
+  for (const contour of sorted) {
+    if (entries.length >= 13) break;
+
+    const simplified = douglasPeucker(contour, span / 16);
+    const gridPts = simplified.map(([x, y]) => norm(x, y));
+
+    const deduped = [gridPts[0]];
+    for (let i = 1; i < gridPts.length; i++) {
+      const p = gridPts[i], q = deduped[deduped.length-1];
+      if (p.x !== q.x || p.y !== q.y) deduped.push(p);
+    }
+    if (deduped.length < 2) continue;
+
+    const room = 14 - entries.length;
+    if (room < 2) break;
+    const pts = deduped.slice(0, room);
+
+    entries.push(pts[0].x * 10 + pts[0].y);
+    for (let i = 1; i < pts.length; i++) entries.push(100 + pts[i].x * 10 + pts[i].y);
+  }
+
   while (entries.length < 14) entries.push(200);
   return entries.slice(0, 14);
 }
 
-function renderGlyphToPixels(font, char, size) {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-
-  try {
-    const glyph = font.charToGlyph(char);
-    if (!glyph) return null;
-    const bb = glyph.getBoundingBox();
-    if (!bb || bb.x1 === bb.x2 || bb.y1 === bb.y2) return null;
-
-    const bW = bb.x2 - bb.x1;
-    const bH = bb.y2 - bb.y1;
-    const s = (size * 0.85) / Math.max(bW, bH);
-    const ox = (size - bW * s) / 2 - bb.x1 * s;
-    const oy = (size - bH * s) / 2 + bb.y2 * s;
-    const fontSize = s * font.unitsPerEm;
-
-    ctx.fillStyle = 'black';
-    // Use glyph.draw() — more reliable than Path2D(toSVG()) across browsers
-    glyph.draw(ctx, ox, oy, fontSize);
-  } catch (e) {
-    console.warn('renderGlyphToPixels failed for', char, e);
-    return null;
-  }
-
-  const imageData = ctx.getImageData(0, 0, size, size);
-  const pixels = new Uint8Array(size * size);
-  let hasContent = false;
-  for (let i = 0; i < size * size; i++) {
-    pixels[i] = imageData.data[i * 4 + 3] > 64 ? 1 : 0;
-    if (pixels[i]) hasContent = true;
-  }
-  if (!hasContent) return null;
-  return { pixels, canvas };
-}
-
-// Convert all convertible characters from a loaded opentype font
-// Returns array of 63 vector arrays (indices matching DEFAULT_VECTORS)
+// Convert all convertible characters from a loaded opentype font.
+// Returns array of 63 vector arrays (indices matching DEFAULT_VECTORS).
 function convertFont(font) {
-  const result = DEFAULT_VECTORS.map(v => [...v]);
+  const out = DEFAULT_VECTORS.map(v => [...v]);
 
   const charForIndex = [
     'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
     '0','1','2','3','4','5','6','7','8','9',
-    null, null, // blanks [36,37]
-    '/',        // [38]
-    null, null, null, // Ä Ö Ü [39-41] — keep defaults, most fonts don't have these or they don't thin well
+    null, null,  // blanks [36,37]
+    '/',         // [38]
+    null, null, null, // Ä Ö Ü [39-41]
     ',','-','.','!','?', // [42-46]
-    null,       // ß [47] — keep default
-    "'",        // [48]
-    '&','+',':',';','"','#','(',')',  // [49-56]
+    null,        // ß [47]
+    "'",         // [48]
+    '&','+',':',';','"','#','(',')', // [49-56]
     '=','@','*', // [57-59]
-    null, null, null, // smiley icons [60-62] — keep defaults
+    null, null, null, // smiley icons [60-62]
   ];
 
   for (let idx = 0; idx < charForIndex.length; idx++) {
     const ch = charForIndex[idx];
     if (!ch) continue;
-
     try {
-      const rendered = renderGlyphToPixels(font, ch, RENDER_SIZE);
-      if (!rendered) continue;
-
-      const thinned = zhangSuenThinning(rendered.pixels, RENDER_SIZE, RENDER_SIZE);
-      const paths = tracePaths(thinned, RENDER_SIZE, RENDER_SIZE);
-      if (paths.length === 0) continue;
-
-      const vec = encodePathsToVector(paths, RENDER_SIZE);
-
-      // Sanity check: must have at least one non-200 value
-      if (vec[0] !== 200) {
-        result[idx] = vec;
-      }
+      const glyphData = getGlyphContours(font, ch);
+      if (!glyphData) continue;
+      const vec = encodeContoursToVector(glyphData.contours, glyphData.bb);
+      if (vec[0] !== 200) out[idx] = vec;
     } catch (e) {
-      console.warn('convertFont failed for index', idx, '(', ch, '):', e);
+      console.warn('convertFont failed for', ch, ':', e);
     }
   }
 
-  return result;
+  return out;
 }
 
 // Render a single glyph preview onto a canvas (for character grid display)
@@ -400,4 +287,4 @@ function renderVectorToCanvas(vectors, canvas, opts = {}) {
   }
 }
 
-window.Vectorizer = { DEFAULT_VECTORS, CHAR_LABELS, convertFont, renderVectorToCanvas, pixelToGrid, RENDER_SIZE };
+window.Vectorizer = { DEFAULT_VECTORS, CHAR_LABELS, convertFont, renderVectorToCanvas };
