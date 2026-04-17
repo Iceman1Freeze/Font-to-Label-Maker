@@ -127,19 +127,23 @@
 
       tile.addEventListener('click', () => selectChar(i));
       charGrid.appendChild(tile);
-      drawTileCanvas(tileCanvas, vectorData[i]);
+      drawTileCanvas(tileCanvas, vectorData[i], i);
     }
   }
 
-  function drawTileCanvas(canvas, vectors) {
-    Vectorizer.renderVectorToCanvas(vectors, canvas, { size: 60 });
+  function drawTileCanvas(canvas, vectors, idx) {
+    if (loadedFont && idx !== undefined) {
+      Vectorizer.renderGlyphToCanvas(loadedFont, idx, canvas);
+    } else {
+      Vectorizer.renderVectorToCanvas(vectors, canvas, { size: 60 });
+    }
   }
 
   function updateCharTile(idx) {
     const tile = charGrid.querySelector(`[data-idx="${idx}"]`);
     if (!tile) return;
     const tileCanvas = tile.querySelector('canvas');
-    drawTileCanvas(tileCanvas, vectorData[idx]);
+    drawTileCanvas(tileCanvas, vectorData[idx], idx);
     tile.classList.toggle('modified',
       JSON.stringify(vectorData[idx]) !== JSON.stringify(Vectorizer.DEFAULT_VECTORS[idx])
     );

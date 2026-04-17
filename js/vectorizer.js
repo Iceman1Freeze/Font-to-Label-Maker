@@ -79,6 +79,16 @@ const CHAR_LABELS = [
   '} 😊','~ 😮','$ ♥'
 ];
 
+// Character index → glyph lookup (shared by conversion, tile rendering, and editor)
+const CHAR_MAP = [
+  'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
+  '0','1','2','3','4','5','6','7','8','9',
+  null, null, '/',
+  'Ä','Ö','Ü',
+  ',','-','.','!','?','ß',"'",'&','+',':',';','"','#','(',')','=','@','*',
+  '}','~','$'
+];
+
 // ── Outline-based conversion pipeline ────────────────────────────────────────
 // Samples the font's actual bezier curves directly — no rasterization/thinning.
 
@@ -208,22 +218,8 @@ function encodeContoursToVector(contours, bb) {
 function convertFont(font) {
   const out = DEFAULT_VECTORS.map(v => [...v]);
 
-  const charForIndex = [
-    'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-    '0','1','2','3','4','5','6','7','8','9',
-    null, null,  // blanks [36,37]
-    '/',         // [38]
-    null, null, null, // Ä Ö Ü [39-41]
-    ',','-','.','!','?', // [42-46]
-    null,        // ß [47]
-    "'",         // [48]
-    '&','+',':',';','"','#','(',')', // [49-56]
-    '=','@','*', // [57-59]
-    null, null, null, // smiley icons [60-62]
-  ];
-
-  for (let idx = 0; idx < charForIndex.length; idx++) {
-    const ch = charForIndex[idx];
+  for (let idx = 0; idx < CHAR_MAP.length; idx++) {
+    const ch = CHAR_MAP[idx];
     if (!ch) continue;
     try {
       const glyphData = getGlyphContours(font, ch);
@@ -236,6 +232,30 @@ function convertFont(font) {
   }
 
   return out;
+}
+
+// Render the actual TTF glyph onto a canvas tile (image-based, not vector strokes)
+function renderGlyphToCanvas(font, charIndex, canvas) {
+  const size = canvas.width;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, size, size);
+
+  const ch = CHAR_MAP[charIndex];
+  if (!ch) return;
+
+  try {
+    const glyph = font.charToGlyph(ch);
+    const bb = glyph.getBoundingBox();
+    if (!bb || bb.x1 === bb.x2 || bb.y1 === bb.y2) return;
+    const charW = bb.x2 - bb.x1, charH = bb.y2 - bb.y1;
+    const scale = (size * 0.8) / Math.max(charW, charH);
+    const ox = (size - charW * scale) / 2 - bb.x1 * scale;
+    const oy = (size - charH * scale) / 2 + bb.y2 * scale;
+    ctx.fillStyle = '#ffffff';
+    const path = glyph.getPath(ox, oy, scale * font.unitsPerEm);
+    ctx.fill(new Path2D(path.toSVG()));
+  } catch (e) {}
 }
 
 // Render a single glyph preview onto a canvas (for character grid display)
@@ -287,4 +307,4 @@ function renderVectorToCanvas(vectors, canvas, opts = {}) {
   }
 }
 
-window.Vectorizer = { DEFAULT_VECTORS, CHAR_LABELS, convertFont, renderVectorToCanvas };
+window.Vectorizer = { DEFAULT_VECTORS, CHAR_LABELS, CHAR_MAP, convertFont, renderGlyphToCanvas, renderVectorToCanvas };
