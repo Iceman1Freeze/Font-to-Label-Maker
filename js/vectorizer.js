@@ -137,8 +137,8 @@ function _sampleContour(cmds) {
       }
       cx = cmd.x; cy = cmd.y;
     } else if (cmd.type === 'Q') {
-      for (let ti = 1; ti <= 2; ti++) {
-        const t = ti / 2, u = 1 - t;
+      for (let ti = 1; ti <= 4; ti++) {
+        const t = ti / 4, u = 1 - t;
         pts.push({
           x: u*u*cx + 2*u*t*cmd.x1 + t*t*cmd.x,
           y: u*u*cy + 2*u*t*cmd.y1 + t*t*cmd.y
@@ -150,6 +150,27 @@ function _sampleContour(cmds) {
     }
   }
   return pts;
+}
+
+// Ramer-Douglas-Peucker: reduce pts to essential shape-defining points
+function _rdpSimplify(pts, epsilon) {
+  if (pts.length <= 2) return pts;
+  const { gx: x1, gy: y1 } = pts[0];
+  const { gx: x2, gy: y2 } = pts[pts.length - 1];
+  const lineLen = Math.hypot(x2 - x1, y2 - y1);
+  let maxDist = 0, maxIdx = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const { gx: px, gy: py } = pts[i];
+    const d = lineLen < 1e-9
+      ? Math.hypot(px - x1, py - y1)
+      : Math.abs((y2 - y1) * px - (x2 - x1) * py + x2 * y1 - y2 * x1) / lineLen;
+    if (d > maxDist) { maxDist = d; maxIdx = i; }
+  }
+  if (maxDist <= epsilon) return [pts[0], pts[pts.length - 1]];
+  return [
+    ..._rdpSimplify(pts.slice(0, maxIdx + 1), epsilon).slice(0, -1),
+    ..._rdpSimplify(pts.slice(maxIdx), epsilon)
+  ];
 }
 
 // Select n points from pts that best preserve shape by keeping corners (large angle changes)
@@ -196,7 +217,7 @@ function _convertGlyphOutline(font, ch) {
 
     const path = glyph.getPath(ox, oy, scale * font.unitsPerEm);
     const contours = _extractContours(path.commands)
-      .map(cmds => _snapPath(_sampleContour(cmds), CELL))
+      .map(cmds => _rdpSimplify(_snapPath(_sampleContour(cmds), CELL), 1.5))
       .filter(pts => pts.length >= 3);
 
     if (!contours.length) return null;
