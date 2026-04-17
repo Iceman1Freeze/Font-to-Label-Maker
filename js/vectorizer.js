@@ -173,21 +173,17 @@ function _rdpSimplify(pts, epsilon) {
   ];
 }
 
-// Select n points from pts that best preserve shape by keeping corners (large angle changes)
-function _selectCornerPoints(pts, n) {
+// Binary-search for the RDP epsilon that produces exactly n points (or as close as possible)
+function _rdpToCount(pts, n) {
   if (pts.length <= n) return pts;
-  const scores = pts.map((p, i) => {
-    if (i === 0 || i === pts.length - 1) return 1e9; // always keep endpoints
-    const prev = pts[i - 1], next = pts[i + 1];
-    const dx1 = p.gx - prev.gx, dy1 = p.gy - prev.gy;
-    const dx2 = next.gx - p.gx,  dy2 = next.gy - p.gy;
-    const mag = Math.hypot(dx1, dy1) * Math.hypot(dx2, dy2);
-    return mag === 0 ? 0 : 1 - (dx1 * dx2 + dy1 * dy2) / mag; // 0=straight, 2=sharp turn
-  });
-  const indices = Array.from({ length: pts.length }, (_, i) => i);
-  indices.sort((a, b) => scores[b] - scores[a]);
-  const keep = new Set(indices.slice(0, n));
-  return pts.filter((_, i) => keep.has(i));
+  let lo = 0, hi = 16;
+  for (let iter = 0; iter < 28; iter++) {
+    const mid = (lo + hi) / 2;
+    const len = _rdpSimplify(pts, mid).length;
+    if (len === n) { lo = hi = mid; break; }
+    if (len > n) lo = mid; else hi = mid;
+  }
+  return _rdpSimplify(pts, (lo + hi) / 2);
 }
 
 function _snapPath(pts, CELL) {
@@ -217,7 +213,7 @@ function _convertGlyphOutline(font, ch) {
 
     const path = glyph.getPath(ox, oy, scale * font.unitsPerEm);
     const contours = _extractContours(path.commands)
-      .map(cmds => _rdpSimplify(_snapPath(_sampleContour(cmds), CELL), 1.5))
+      .map(cmds => _snapPath(_sampleContour(cmds), CELL))
       .filter(pts => pts.length >= 3);
 
     if (!contours.length) return null;
@@ -242,8 +238,8 @@ function _convertGlyphOutline(font, ch) {
       const pts = contours[ci];
       const n = allocs[ci];
 
-      // Select n corner-preserving points in original order
-      const sub = _selectCornerPoints(pts, n);
+      // Adaptively simplify to n points using RDP binary search
+      const sub = _rdpToCount(pts, n);
       // Remove consecutive duplicates
       const deduped = [sub[0]];
       for (let j = 1; j < sub.length; j++) {
