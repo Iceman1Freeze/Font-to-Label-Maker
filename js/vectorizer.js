@@ -152,6 +152,23 @@ function _sampleContour(cmds) {
   return pts;
 }
 
+// Select n points from pts that best preserve shape by keeping corners (large angle changes)
+function _selectCornerPoints(pts, n) {
+  if (pts.length <= n) return pts;
+  const scores = pts.map((p, i) => {
+    if (i === 0 || i === pts.length - 1) return 1e9; // always keep endpoints
+    const prev = pts[i - 1], next = pts[i + 1];
+    const dx1 = p.gx - prev.gx, dy1 = p.gy - prev.gy;
+    const dx2 = next.gx - p.gx,  dy2 = next.gy - p.gy;
+    const mag = Math.hypot(dx1, dy1) * Math.hypot(dx2, dy2);
+    return mag === 0 ? 0 : 1 - (dx1 * dx2 + dy1 * dy2) / mag; // 0=straight, 2=sharp turn
+  });
+  const indices = Array.from({ length: pts.length }, (_, i) => i);
+  indices.sort((a, b) => scores[b] - scores[a]);
+  const keep = new Set(indices.slice(0, n));
+  return pts.filter((_, i) => keep.has(i));
+}
+
 function _snapPath(pts, CELL) {
   const result = [];
   let lastKey = null;
@@ -204,12 +221,8 @@ function _convertGlyphOutline(font, ch) {
       const pts = contours[ci];
       const n = allocs[ci];
 
-      // Evenly subsample to n points
-      const sub = [];
-      for (let j = 0; j < n; j++) {
-        const idx = Math.round(j * (pts.length - 1) / Math.max(1, n - 1));
-        sub.push(pts[Math.min(idx, pts.length - 1)]);
-      }
+      // Select n corner-preserving points in original order
+      const sub = _selectCornerPoints(pts, n);
       // Remove consecutive duplicates
       const deduped = [sub[0]];
       for (let j = 1; j < sub.length; j++) {
