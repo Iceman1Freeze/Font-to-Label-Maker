@@ -154,12 +154,13 @@ function _convertGlyphRaster(font, ch) {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, SIZE, SIZE);
-    ctx.fillStyle = '#fff';
     const cW = bb.x2 - bb.x1, cH = bb.y2 - bb.y1;
     const scale = (SIZE * 0.85) / Math.max(cW, cH);
     const ox = (SIZE - cW * scale) / 2 - bb.x1 * scale;
     const oy = (SIZE - cH * scale) / 2 + bb.y2 * scale;
-    glyph.draw(ctx, ox, oy, scale * font.unitsPerEm);
+    const rasterPath = glyph.getPath(ox, oy, scale * font.unitsPerEm);
+    rasterPath.fill = '#ffffff';
+    rasterPath.draw(ctx);
 
     // 2. Binary image
     const imgData = ctx.getImageData(0, 0, SIZE, SIZE).data;
@@ -271,8 +272,9 @@ function renderGlyphToCanvas(font, charIndex, canvas) {
     const scale = (size * 0.8) / Math.max(cW, cH);
     const ox = (size - cW * scale) / 2 - bb.x1 * scale;
     const oy = (size - cH * scale) / 2 + bb.y2 * scale;
-    ctx.fillStyle = '#ffffff';
-    glyph.draw(ctx, ox, oy, scale * font.unitsPerEm);
+    const tilePath = glyph.getPath(ox, oy, scale * font.unitsPerEm);
+    tilePath.fill = '#ffffff';
+    tilePath.draw(ctx);
   } catch (e) {}
 }
 
