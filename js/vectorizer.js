@@ -101,135 +101,130 @@ const CHAR_MAP = [
   '}','~','$'
 ];
 
-// ── Rasterize → skeleton → trace pipeline ────────────────────────────────────
-// Renders each glyph to a bitmap, thins it to a 1-px skeleton via Zhang-Suen,
-// then traces paths through the skeleton snapped to the 9×9 grid.
+// ── Outline tracing pipeline ──────────────────────────────────────────────────
+// Samples points directly from opentype.js bezier path commands, snaps to
+// the 9×9 grid, and encodes as move/draw entries. No rasterization needed.
 
-function _zhangSuen(binary, w, h) {
-  const g = Uint8Array.from(binary);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (let pass = 0; pass < 2; pass++) {
-      const toRemove = [];
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          if (!g[y * w + x]) continue;
-          const p2 = g[(y-1)*w + x],   p3 = g[(y-1)*w + x+1];
-          const p4 = g[y*w   + x+1],   p5 = g[(y+1)*w + x+1];
-          const p6 = g[(y+1)*w + x],   p7 = g[(y+1)*w + x-1];
-          const p8 = g[y*w   + x-1],   p9 = g[(y-1)*w + x-1];
-          const B = p2+p3+p4+p5+p6+p7+p8+p9;
-          if (B < 2 || B > 6) continue;
-          const seq = [p2,p3,p4,p5,p6,p7,p8,p9,p2];
-          let A = 0;
-          for (let k = 0; k < 8; k++) if (!seq[k] && seq[k+1]) A++;
-          if (A !== 1) continue;
-          if (pass === 0) {
-            if (p2*p4*p6 !== 0) continue;
-            if (p4*p6*p8 !== 0) continue;
-          } else {
-            if (p2*p4*p8 !== 0) continue;
-            if (p2*p6*p8 !== 0) continue;
-          }
-          toRemove.push(y * w + x);
-        }
-      }
-      if (toRemove.length) { changed = true; toRemove.forEach(i => g[i] = 0); }
-    }
+function _extractContours(commands) {
+  const contours = [];
+  let cur = [];
+  for (const cmd of commands) {
+    if (cmd.type === 'M' && cur.length) { contours.push(cur); cur = []; }
+    cur.push(cmd);
+    if (cmd.type === 'Z') { contours.push(cur); cur = []; }
   }
-  return g;
+  if (cur.length) contours.push(cur);
+  return contours;
 }
 
-function _convertGlyphRaster(font, ch) {
+function _sampleContour(cmds) {
+  const pts = [];
+  let cx = 0, cy = 0, sx = 0, sy = 0;
+  for (const cmd of cmds) {
+    if (cmd.type === 'M') {
+      cx = sx = cmd.x; cy = sy = cmd.y;
+      pts.push({ x: cx, y: cy });
+    } else if (cmd.type === 'L') {
+      cx = cmd.x; cy = cmd.y;
+      pts.push({ x: cx, y: cy });
+    } else if (cmd.type === 'C') {
+      for (let ti = 1; ti <= 4; ti++) {
+        const t = ti / 4, u = 1 - t;
+        pts.push({
+          x: u*u*u*cx + 3*u*u*t*cmd.x1 + 3*u*t*t*cmd.x2 + t*t*t*cmd.x,
+          y: u*u*u*cy + 3*u*u*t*cmd.y1 + 3*u*t*t*cmd.y2 + t*t*t*cmd.y
+        });
+      }
+      cx = cmd.x; cy = cmd.y;
+    } else if (cmd.type === 'Q') {
+      for (let ti = 1; ti <= 2; ti++) {
+        const t = ti / 2, u = 1 - t;
+        pts.push({
+          x: u*u*cx + 2*u*t*cmd.x1 + t*t*cmd.x,
+          y: u*u*cy + 2*u*t*cmd.y1 + t*t*cmd.y
+        });
+      }
+      cx = cmd.x; cy = cmd.y;
+    } else if (cmd.type === 'Z') {
+      pts.push({ x: sx, y: sy });
+    }
+  }
+  return pts;
+}
+
+function _snapPath(pts, CELL) {
+  const result = [];
+  let lastKey = null;
+  for (const pt of pts) {
+    const gx = Math.min(GRID, Math.max(0, Math.round(pt.x / CELL)));
+    const gy = Math.min(GRID, Math.max(0, GRID - Math.round(pt.y / CELL)));
+    const key = `${gx},${gy}`;
+    if (key !== lastKey) { result.push({ gx, gy }); lastKey = key; }
+  }
+  return result;
+}
+
+function _convertGlyphOutline(font, ch) {
   try {
     const glyph = font.charToGlyph(ch);
     const bb = glyph.getBoundingBox();
     if (!bb || bb.x1 === bb.x2 || bb.y1 === bb.y2) return null;
 
-    // 1. Render glyph white-on-black at (GRID+1)*8 pixels
-    const SIZE = (GRID + 1) * 8; // 72px for GRID=8
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = SIZE;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, SIZE, SIZE);
+    const SIZE = (GRID + 1) * 8;
+    const CELL = SIZE / GRID;
     const cW = bb.x2 - bb.x1, cH = bb.y2 - bb.y1;
     const scale = (SIZE * 0.85) / Math.max(cW, cH);
     const ox = (SIZE - cW * scale) / 2 - bb.x1 * scale;
     const oy = (SIZE - cH * scale) / 2 + bb.y2 * scale;
-    const rasterPath = glyph.getPath(ox, oy, scale * font.unitsPerEm);
-    rasterPath.fill = '#ffffff';
-    rasterPath.draw(ctx);
 
-    // 2. Binary image
-    const imgData = ctx.getImageData(0, 0, SIZE, SIZE).data;
-    const binary = new Uint8Array(SIZE * SIZE);
-    for (let i = 0; i < SIZE * SIZE; i++) binary[i] = imgData[i * 4] > 128 ? 1 : 0;
+    const path = glyph.getPath(ox, oy, scale * font.unitsPerEm);
+    const contours = _extractContours(path.commands)
+      .map(cmds => _snapPath(_sampleContour(cmds), CELL))
+      .filter(pts => pts.length >= 3);
 
-    // 3. Zhang-Suen skeleton
-    const skel = _zhangSuen(binary, SIZE, SIZE);
+    if (!contours.length) return null;
 
-    // 4. Snap skeleton pixels to GRID×GRID (canvas y=0 is top → grid gy=GRID)
-    const CELL = SIZE / GRID;
-    const gridSet = new Set();
-    for (let py = 0; py < SIZE; py++) {
-      for (let px = 0; px < SIZE; px++) {
-        if (!skel[py * SIZE + px]) continue;
-        const gx = Math.min(GRID, Math.round(px / CELL));
-        const gy = Math.min(GRID, GRID - Math.round(py / CELL));
-        gridSet.add(`${gx},${gy}`);
-      }
-    }
-    if (gridSet.size === 0) return null;
-
-    // 5. Build points and 8-directional adjacency
-    const points = [...gridSet].map(k => {
-      const [gx, gy] = k.split(',').map(Number);
-      return { gx, gy, visited: false };
-    });
-    const keyToIdx = {};
-    points.forEach((p, i) => { keyToIdx[`${p.gx},${p.gy}`] = i; });
-    const adj = points.map(p => {
-      const nbrs = [];
-      for (let dy = -1; dy <= 1; dy++)
-        for (let dx = -1; dx <= 1; dx++) {
-          if (!dx && !dy) continue;
-          const k = `${p.gx+dx},${p.gy+dy}`;
-          if (k in keyToIdx) nbrs.push(keyToIdx[k]);
-        }
-      return nbrs;
-    });
-
-    // 6. Trace paths via Warnsdorff DFS (minimise dead-ends)
-    const entries = [];
+    // Sort descending by length; drop contours that can't each get min 3 pts
+    contours.sort((a, b) => b.length - a.length);
     const MAX = 13;
+    while (contours.length > 0 && contours.length * 3 > MAX) contours.pop();
+    if (!contours.length) return null;
 
-    const unvisited = i => adj[i].filter(j => !points[j].visited);
-
-    function findStart() {
-      for (let i = 0; i < points.length; i++)
-        if (!points[i].visited && unvisited(i).length <= 1) return i;
-      for (let i = 0; i < points.length; i++)
-        if (!points[i].visited) return i;
-      return -1;
+    // Proportional allocation, minimum 3 per contour
+    const totalLen = contours.reduce((s, c) => s + c.length, 0);
+    const allocs = contours.map(c => Math.max(3, Math.floor(MAX * c.length / totalLen)));
+    let sum = allocs.reduce((s, a) => s + a, 0);
+    for (let i = allocs.length - 1; i >= 0 && sum > MAX; i--) {
+      const cut = Math.min(sum - MAX, allocs[i] - 3);
+      allocs[i] -= cut; sum -= cut;
     }
 
-    while (entries.length < MAX) {
-      const si = findStart();
-      if (si < 0) break;
-      points[si].visited = true;
-      entries.push(points[si].gx * 10 + points[si].gy); // move
-      let cur = si;
-      while (entries.length < MAX) {
-        const nbrs = unvisited(cur);
-        if (!nbrs.length) break;
-        nbrs.sort((a, b) => unvisited(a).length - unvisited(b).length);
-        const next = nbrs[0];
-        points[next].visited = true;
-        entries.push(100 + points[next].gx * 10 + points[next].gy); // draw
-        cur = next;
+    const entries = [];
+    for (let ci = 0; ci < contours.length && entries.length < MAX; ci++) {
+      const pts = contours[ci];
+      const n = allocs[ci];
+
+      // Evenly subsample to n points
+      const sub = [];
+      for (let j = 0; j < n; j++) {
+        const idx = Math.round(j * (pts.length - 1) / Math.max(1, n - 1));
+        sub.push(pts[Math.min(idx, pts.length - 1)]);
       }
+      // Remove consecutive duplicates
+      const deduped = [sub[0]];
+      for (let j = 1; j < sub.length; j++) {
+        const p = sub[j], q = deduped[deduped.length - 1];
+        if (p.gx !== q.gx || p.gy !== q.gy) deduped.push(p);
+      }
+      if (deduped.length < 2) continue;
+
+      // MOVE first, DRAW rest, close contour
+      entries.push(deduped[0].gx * 10 + deduped[0].gy);
+      for (let j = 1; j < deduped.length && entries.length < MAX; j++)
+        entries.push(100 + deduped[j].gx * 10 + deduped[j].gy);
+      const first = deduped[0], last = deduped[deduped.length - 1];
+      if ((first.gx !== last.gx || first.gy !== last.gy) && entries.length < MAX)
+        entries.push(100 + first.gx * 10 + first.gy);
     }
 
     if (!entries.length) return null;
@@ -247,7 +242,7 @@ function convertFont(font) {
     const ch = CHAR_MAP[idx];
     if (!ch) continue;
     try {
-      const vec = _convertGlyphRaster(font, ch);
+      const vec = _convertGlyphOutline(font, ch);
       if (vec && vec[0] !== 200) out[idx] = vec;
     } catch (e) {
       console.warn('convertFont failed for', ch, ':', e);
