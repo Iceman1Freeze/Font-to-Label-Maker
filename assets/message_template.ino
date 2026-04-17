@@ -57,11 +57,11 @@ ezButton button1(14); //joystick button handler
 
 
 //text variables
-int x_scale = 230;//these are multiplied against the stored coordinate (between 0 and 4) to get the actual number of steps moved
-int y_scale = 230;//for example, if this is 230(default), then 230(scale) x 4(max coordinate) = 920 (motor steps)
+int x_scale = 115;//these are multiplied against the stored coordinate (between 0 and 8) to get the actual number of steps moved
+int y_scale = 115;//for example, if this is 115, then 115(scale) x 8(max coordinate) = 920 (motor steps) — same physical range as original
 int scale = x_scale;
-int space = x_scale * 5; //space size between letters (as steps) based on X scale in order to match letter width
-//multiplied by 5 because the scale variables are multiplied against coordinates later, while space is just fed in directly, so it needs to be scaled up by 5 to match
+int space = x_scale * 9; //space size between letters (as steps) — 9 units wide per character on a 9x9 grid
+//multiplied by 9 because the scale variables are multiplied against coordinates later, while space is just fed in directly, so it needs to be scaled up by 9 to match
 
 
 // Joystick setup

@@ -97,22 +97,22 @@ class VectorEditor {
 
   _gridFromCanvas(cx, cy) {
     const size = this.canvas.width;
-    const cell = size / 4;
+    const cell = size / Vectorizer.GRID;
     return {
-      x: Math.min(4, Math.max(0, Math.round(cx / cell))),
-      y: Math.min(4, Math.max(0, 4 - Math.round(cy / cell)))
+      x: Math.min(Vectorizer.GRID, Math.max(0, Math.round(cx / cell))),
+      y: Math.min(Vectorizer.GRID, Math.max(0, Vectorizer.GRID - Math.round(cy / cell)))
     };
   }
 
   _canvasFromGrid(gx, gy) {
     const size = this.canvas.width;
-    const cell = size / 4;
-    return { cx: gx * cell, cy: (4 - gy) * cell };
+    const cell = size / Vectorizer.GRID;
+    return { cx: gx * cell, cy: (Vectorizer.GRID - gy) * cell };
   }
 
   _hitTest(cx, cy) {
     const points = this._parsePoints();
-    const hitR = this.canvas.width / 8; // hit radius
+    const hitR = this.canvas.width / (Vectorizer.GRID * 2); // hit radius = half a cell
     for (let i = 0; i < points.length; i++) {
       const { cx: px, cy: py } = this._canvasFromGrid(points[i].x, points[i].y);
       if (Math.hypot(cx - px, cy - py) < hitR) return i;
@@ -192,16 +192,7 @@ class VectorEditor {
     this.glyphCtx.clearRect(0, 0, size, size);
     if (!this.font) return;
 
-    const charMap = [
-      'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-      '0','1','2','3','4','5','6','7','8','9',
-      null, null, '/',
-      'Ä','Ö','Ü',
-      ',','-','.','!','?','ß',"'",'&','+',':',';','"','#','(',')',
-      '=','@','*',
-      '}','~','$'
-    ];
-    const ch = charMap[this.charIndex];
+    const ch = Vectorizer.CHAR_MAP[this.charIndex];
     if (!ch) return;
 
     try {
@@ -224,7 +215,8 @@ class VectorEditor {
 
   render() {
     const size = this.canvas.width;
-    const cell = size / 4;
+    const G = Vectorizer.GRID;
+    const cell = size / G;
     const ctx = this.ctx;
 
     ctx.clearRect(0, 0, size, size);
@@ -234,11 +226,11 @@ class VectorEditor {
 
     // Grid dots
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    for (let gx = 0; gx <= 4; gx++) {
-      for (let gy = 0; gy <= 4; gy++) {
+    for (let gx = 0; gx <= G; gx++) {
+      for (let gy = 0; gy <= G; gy++) {
         const { cx, cy } = this._canvasFromGrid(gx, gy);
         ctx.beginPath();
-        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -246,13 +238,13 @@ class VectorEditor {
     // Grid lines (faint)
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
-    for (let gx = 0; gx <= 4; gx++) {
+    for (let gx = 0; gx <= G; gx++) {
       ctx.beginPath();
       ctx.moveTo(gx * cell, 0);
       ctx.lineTo(gx * cell, size);
       ctx.stroke();
     }
-    for (let gy = 0; gy <= 4; gy++) {
+    for (let gy = 0; gy <= G; gy++) {
       ctx.beginPath();
       ctx.moveTo(0, gy * cell);
       ctx.lineTo(size, gy * cell);

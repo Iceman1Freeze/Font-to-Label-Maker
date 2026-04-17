@@ -65,8 +65,8 @@ class LabelPreview {
       return;
     }
 
-    const CELL = Math.floor((H - 28) / 4); // cell size in pixels based on canvas height
-    const CHAR_W = CELL * 5;               // each character occupies 5 cells width
+    const CELL = Math.floor((H - 28) / Vectorizer.GRID); // cell size in pixels based on canvas height
+    const CHAR_W = CELL * (Vectorizer.GRID + 1);          // each character occupies GRID+1 cells width
     const totalW = text.length * CHAR_W + CELL;
     const startX = Math.max(16, (W - totalW) / 2);
     const baseY = 14; // top margin
@@ -77,7 +77,7 @@ class LabelPreview {
     ctx.lineJoin = 'round';
 
     const toCanvasX = (gx, offsetX) => offsetX + gx * CELL;
-    const toCanvasY = (gy) => baseY + (4 - gy) * CELL;
+    const toCanvasY = (gy) => baseY + (Vectorizer.GRID - gy) * CELL;
 
     let xOffset = startX;
 
