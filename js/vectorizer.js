@@ -159,7 +159,7 @@ function _convertGlyphRaster(font, ch) {
     const scale = (SIZE * 0.85) / Math.max(cW, cH);
     const ox = (SIZE - cW * scale) / 2 - bb.x1 * scale;
     const oy = (SIZE - cH * scale) / 2 + bb.y2 * scale;
-    ctx.fill(new Path2D(glyph.getPath(ox, oy, scale * font.unitsPerEm).toSVG()));
+    glyph.draw(ctx, ox, oy, scale * font.unitsPerEm);
 
     // 2. Binary image
     const imgData = ctx.getImageData(0, 0, SIZE, SIZE).data;
@@ -272,7 +272,7 @@ function renderGlyphToCanvas(font, charIndex, canvas) {
     const ox = (size - cW * scale) / 2 - bb.x1 * scale;
     const oy = (size - cH * scale) / 2 + bb.y2 * scale;
     ctx.fillStyle = '#ffffff';
-    ctx.fill(new Path2D(glyph.getPath(ox, oy, scale * font.unitsPerEm).toSVG()));
+    glyph.draw(ctx, ox, oy, scale * font.unitsPerEm);
   } catch (e) {}
 }
 
