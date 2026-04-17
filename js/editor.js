@@ -205,10 +205,9 @@ class VectorEditor {
       const oy = (size - charH * scale) / 2 + bb.y2 * scale;
 
       this.glyphCtx.globalAlpha = 0.15;
-      this.glyphCtx.fillStyle = '#00d4ff';
-      const path = glyph.getPath(ox, oy, scale * this.font.unitsPerEm);
-      const p2d = new Path2D(path.toSVG());
-      this.glyphCtx.fill(p2d);
+      const bgPath = glyph.getPath(ox, oy, scale * this.font.unitsPerEm);
+      bgPath.fill = '#00d4ff';
+      bgPath.draw(this.glyphCtx);
       this.glyphCtx.globalAlpha = 1.0;
     } catch (e) {}
   }
