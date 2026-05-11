@@ -5,7 +5,7 @@ Repo: https://github.com/Iceman1Freeze/Font-to-Label-Maker
 
 ---
 
-## Current Version: V.021
+## Current Version: V.022
 
 ---
 
@@ -104,6 +104,30 @@ DEVLOG.md                    — this file
 - `_convertGlyphOutline(font, ch)` — orchestrates above; allocates 13-point budget
   proportionally across contours (outer + inner counters like in A, B, O)
 - `convertFont` updated to call `_convertGlyphOutline` instead of old raster path
+
+---
+
+### Session 6 — Angle-Weighted RDP replaces hard corner protection (V.022)
+
+**Problem: V.021 hard corner protection caused over-retention of redundant points**
+- Pixel fonts (PixelOperator Bold) have 90° corners everywhere; `_getCornerPoints` marked
+  nearly every snapped point as "required"
+- When required.size > budget n, the safety `result.slice(0, n)` returned an arbitrary
+  first-n subset rather than the most meaningful corners, producing bad traces
+- Inner-top corners of A (nearly on the horizontal top edge) were forced to stay even
+  though they added zero visual information, creating a bumpy/jagged top edge
+
+**V.022 — Angle-weighted RDP**
+- Replaced hard-required Set with multiplicative angle weighting in `_rdpSimplify`:
+  `effective_distance = geom_distance × (1 + angle/π)`
+- A 90° corner at geom_distance d appears 1.5× further → harder to remove
+- A 90° corner at geom_distance ≈ 0 (on the simplification line) → effective ≈ 0 → removed
+  This correctly cleans up redundant inner-edge corners that lie on a straight section
+- Removed `_getCornerPoints`, `required` parameter from all RDP functions
+- Added `_attachAngles(pts)`: attaches `.angle` property to each interior snapped point;
+  called on each contour after `_snapPath` in `_convertGlyphOutline`
+- `_rdpToCount` hi bound stays at GRID*2 (16) to cover the up-to-2× angle multiplier
+- No safety truncation needed — binary search always converges gracefully
 
 ---
 

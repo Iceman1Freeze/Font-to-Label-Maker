@@ -152,43 +152,56 @@ function _sampleContour(cmds) {
   return pts;
 }
 
-// Ramer-Douglas-Peucker: reduce pts to essential shape-defining points.
-// Points in the optional `required` Set are never removed.
-function _rdpSimplify(pts, epsilon, required = null) {
+// Attach the direction-change angle to each interior snapped point.
+// Endpoints are skipped — they are never candidates for RDP removal.
+function _attachAngles(pts) {
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
+    const a1 = Math.atan2(cur.gy - prev.gy, cur.gx - prev.gx);
+    const a2 = Math.atan2(next.gy - cur.gy, next.gx - cur.gx);
+    let diff = Math.abs(a2 - a1);
+    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+    pts[i].angle = diff;
+  }
+}
+
+// Ramer-Douglas-Peucker with angle-weighted distance.
+// effective_distance = geometric_distance * (1 + angle/π)
+// A 90° corner at distance d appears 1.5× further; a 180° corner 2×.
+// Corners near the simplification line are still removed (d≈0 → effective≈0).
+function _rdpSimplify(pts, epsilon) {
   if (pts.length <= 2) return pts;
   const { gx: x1, gy: y1 } = pts[0];
   const { gx: x2, gy: y2 } = pts[pts.length - 1];
   const lineLen = Math.hypot(x2 - x1, y2 - y1);
   let maxDist = 0, maxIdx = 0;
   for (let i = 1; i < pts.length - 1; i++) {
-    const isRequired = required && required.has(pts[i]);
-    const { gx: px, gy: py } = pts[i];
-    const d = isRequired ? Infinity
-      : lineLen < 1e-9
-        ? Math.hypot(px - x1, py - y1)
-        : Math.abs((y2 - y1) * px - (x2 - x1) * py + x2 * y1 - y2 * x1) / lineLen;
+    const { gx: px, gy: py, angle = 0 } = pts[i];
+    const geom = lineLen < 1e-9
+      ? Math.hypot(px - x1, py - y1)
+      : Math.abs((y2 - y1) * px - (x2 - x1) * py + x2 * y1 - y2 * x1) / lineLen;
+    const d = geom * (1 + angle / Math.PI);
     if (d > maxDist) { maxDist = d; maxIdx = i; }
   }
   if (maxDist <= epsilon) return [pts[0], pts[pts.length - 1]];
   return [
-    ..._rdpSimplify(pts.slice(0, maxIdx + 1), epsilon, required).slice(0, -1),
-    ..._rdpSimplify(pts.slice(maxIdx), epsilon, required)
+    ..._rdpSimplify(pts.slice(0, maxIdx + 1), epsilon).slice(0, -1),
+    ..._rdpSimplify(pts.slice(maxIdx), epsilon)
   ];
 }
 
-// Binary-search for the RDP epsilon that produces exactly n points (or as close as possible).
-// Corner points passed via `required` are never removed by RDP.
-function _rdpToCount(pts, n, required = null) {
+// Binary-search for the RDP epsilon that produces exactly n points.
+// hi = GRID*2 accounts for the up-to-2× angle multiplier on top of max grid distance.
+function _rdpToCount(pts, n) {
   if (pts.length <= n) return pts;
-  let lo = 0, hi = GRID;
+  let lo = 0, hi = GRID * 2;
   for (let iter = 0; iter < 28; iter++) {
     const mid = (lo + hi) / 2;
-    const len = _rdpSimplify(pts, mid, required).length;
+    const len = _rdpSimplify(pts, mid).length;
     if (len === n) { lo = hi = mid; break; }
     if (len > n) lo = mid; else hi = mid;
   }
-  const result = _rdpSimplify(pts, (lo + hi) / 2, required);
-  return result.length <= n ? result : result.slice(0, n);
+  return _rdpSimplify(pts, (lo + hi) / 2);
 }
 
 function _snapPath(pts, CELL) {
@@ -201,24 +214,6 @@ function _snapPath(pts, CELL) {
     if (key !== lastKey) { result.push({ gx, gy }); lastKey = key; }
   }
   return result;
-}
-
-// Returns a Set of point objects where direction changes by >= 45°.
-// Endpoints are always included as required.
-function _getCornerPoints(pts) {
-  const corners = new Set();
-  if (!pts.length) return corners;
-  corners.add(pts[0]);
-  if (pts.length > 1) corners.add(pts[pts.length - 1]);
-  for (let i = 1; i < pts.length - 1; i++) {
-    const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
-    const a1 = Math.atan2(cur.gy - prev.gy, cur.gx - prev.gx);
-    const a2 = Math.atan2(next.gy - cur.gy, next.gx - cur.gx);
-    let diff = Math.abs(a2 - a1);
-    if (diff > Math.PI) diff = 2 * Math.PI - diff;
-    if (diff >= Math.PI / 4) corners.add(pts[i]);
-  }
-  return corners;
 }
 
 function _convertGlyphOutline(font, ch) {
@@ -236,7 +231,11 @@ function _convertGlyphOutline(font, ch) {
 
     const path = glyph.getPath(ox, oy, scale * font.unitsPerEm);
     const contours = _extractContours(path.commands)
-      .map(cmds => _snapPath(_sampleContour(cmds), CELL))
+      .map(cmds => {
+        const pts = _snapPath(_sampleContour(cmds), CELL);
+        _attachAngles(pts);
+        return pts;
+      })
       .filter(pts => pts.length >= 3);
 
     if (!contours.length) return null;
@@ -261,9 +260,8 @@ function _convertGlyphOutline(font, ch) {
       const pts = contours[ci];
       const n = allocs[ci];
 
-      // Adaptively simplify to n points using RDP, protecting corner points
-      const corners = _getCornerPoints(pts);
-      const sub = _rdpToCount(pts, n, corners);
+      // Adaptively simplify to n points using angle-weighted RDP
+      const sub = _rdpToCount(pts, n);
 
       // Remove consecutive duplicates
       const deduped = [sub[0]];
