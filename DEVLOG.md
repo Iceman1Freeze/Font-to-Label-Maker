@@ -5,7 +5,7 @@ Repo: https://github.com/Iceman1Freeze/Font-to-Label-Maker
 
 ---
 
-## Current Version: V.022
+## Current Version: V.023
 
 ---
 
@@ -104,6 +104,29 @@ DEVLOG.md                    — this file
 - `_convertGlyphOutline(font, ch)` — orchestrates above; allocates 13-point budget
   proportionally across contours (outer + inner counters like in A, B, O)
 - `convertFont` updated to call `_convertGlyphOutline` instead of old raster path
+
+---
+
+### Session 7 — Winding-based hole dropping, outer-contour priority (V.023)
+
+**Root cause of V.021/V.022 showing zero difference**
+- For pixel fonts where every corner is 90°, the angle multiplier (1 + angle/π = 1.5) is
+  uniform across all corners → RDP selects by geometric distance alone, same as V.020
+- Hard corner protection (V.021) fell back to slice(0,n) → same result
+- The real problem: 13-point budget was split between outer shape AND inner hole (triangle
+  void in A, oval void in O, etc.), giving the outer only ~8 unique corners
+
+**V.023 — Winding direction filter: drop inner holes, give outer all budget**
+- Added `_signedArea(pts)`: shoelace formula on snapped grid coords. In our grid
+  (gy increases upward), outer filled contours are CW in screen = negative signed area;
+  inner holes are CCW in screen = positive signed area
+- `_convertGlyphOutline` now filters `allContours` to keep only negative-area contours
+  before budget allocation. Falls back to all contours if none detected (unusual fonts)
+- Effect on 'A': inner triangular hole (positive area) is dropped; outer contour gets
+  all 13 points instead of ~9, giving ~12 unique corners vs ~8 before
+- Effect on letters with no holes (C, E, F, etc.): unchanged — single outer contour
+- Effect on letters like ':' or '!' where both elements are filled shapes (not holes):
+  both survive the filter and share the budget proportionally as before
 
 ---
 

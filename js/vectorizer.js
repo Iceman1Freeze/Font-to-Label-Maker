@@ -2,7 +2,6 @@
 
 const GRID = 8; // 9×9 coordinate grid (values 0–8 per axis)
 
-// Default vectors from original message.ino — original 5×5 scale (coords 0–4)
 const DEFAULT_VECTORS_RAW = [
   [  0,  124,  140,   32,  112,  200,  200,  200,  200,  200,  200,  200,  200,  200], // A
   [  0,  104,  134,  132,    2,  142,  140,  100,  200,  200,  200,  200,  200,  200], // B
@@ -69,7 +68,6 @@ const DEFAULT_VECTORS_RAW = [
   [ 20,  142,  143,  134,  123,  114,  103,  102,  120,  200,  200,  200,  200,  200], // $ heart
 ];
 
-// Scale a single vector value from 5×5 (0–4) to 9×9 (0–8) by doubling coordinates
 function _scale5to9(v) {
   if (v === 200 || v === 222) return v;
   const draw = v > 99;
@@ -77,10 +75,8 @@ function _scale5to9(v) {
   return (draw ? 100 : 0) + (Math.floor(code / 10) * 2) * 10 + (code % 10) * 2;
 }
 
-// Default vectors scaled to 9×9 grid — used when no custom font is loaded
 const DEFAULT_VECTORS = DEFAULT_VECTORS_RAW.map(char => char.map(_scale5to9));
 
-// Which array index each char maps to (for display/editing labels)
 const CHAR_LABELS = [
   'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
   '0','1','2','3','4','5','6','7','8','9',
@@ -91,7 +87,6 @@ const CHAR_LABELS = [
   '} 😊','~ 😮','$ ♥'
 ];
 
-// Character index → glyph character (shared by conversion, tile rendering, and editor)
 const CHAR_MAP = [
   'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
   '0','1','2','3','4','5','6','7','8','9',
@@ -102,8 +97,6 @@ const CHAR_MAP = [
 ];
 
 // ── Outline tracing pipeline ──────────────────────────────────────────────────
-// Samples points directly from opentype.js bezier path commands, snaps to
-// the 9×9 grid, and encodes as move/draw entries. No rasterization needed.
 
 function _extractContours(commands) {
   const contours = [];
@@ -152,8 +145,16 @@ function _sampleContour(cmds) {
   return pts;
 }
 
-// Attach the direction-change angle to each interior snapped point.
-// Endpoints are skipped — they are never candidates for RDP removal.
+// Shoelace signed area in grid coords (gy increases upward).
+// Negative = outer filled contour (CW in screen); positive = inner hole (CCW in screen).
+function _signedArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length - 1; i++)
+    a += pts[i].gx * pts[i + 1].gy - pts[i + 1].gx * pts[i].gy;
+  return a / 2;
+}
+
+// Attach direction-change angle to each interior snapped point.
 function _attachAngles(pts) {
   for (let i = 1; i < pts.length - 1; i++) {
     const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
@@ -165,10 +166,9 @@ function _attachAngles(pts) {
   }
 }
 
-// Ramer-Douglas-Peucker with angle-weighted distance.
-// effective_distance = geometric_distance * (1 + angle/π)
-// A 90° corner at distance d appears 1.5× further; a 180° corner 2×.
-// Corners near the simplification line are still removed (d≈0 → effective≈0).
+// Angle-weighted RDP: effective_distance = geom * (1 + angle/π).
+// A 90° corner at distance d resists removal 1.5× harder than a non-corner at d.
+// A corner sitting on the simplification line (geom≈0) is still removed.
 function _rdpSimplify(pts, epsilon) {
   if (pts.length <= 2) return pts;
   const { gx: x1, gy: y1 } = pts[0];
@@ -190,8 +190,6 @@ function _rdpSimplify(pts, epsilon) {
   ];
 }
 
-// Binary-search for the RDP epsilon that produces exactly n points.
-// hi = GRID*2 accounts for the up-to-2× angle multiplier on top of max grid distance.
 function _rdpToCount(pts, n) {
   if (pts.length <= n) return pts;
   let lo = 0, hi = GRID * 2;
@@ -230,7 +228,7 @@ function _convertGlyphOutline(font, ch) {
     const oy = (SIZE - cH * scale) / 2 + bb.y2 * scale;
 
     const path = glyph.getPath(ox, oy, scale * font.unitsPerEm);
-    const contours = _extractContours(path.commands)
+    const allContours = _extractContours(path.commands)
       .map(cmds => {
         const pts = _snapPath(_sampleContour(cmds), CELL);
         _attachAngles(pts);
@@ -238,9 +236,15 @@ function _convertGlyphOutline(font, ch) {
       })
       .filter(pts => pts.length >= 3);
 
-    if (!contours.length) return null;
+    if (!allContours.length) return null;
 
-    // Sort descending by length; drop contours that can't each get min 3 pts
+    // Keep only outer (filled) contours — negative signed area in our grid coords.
+    // This drops inner counter/holes (A, B, D, O, etc.) so all budget goes to outer shape.
+    // Falls back to all contours if winding detection yields nothing (unusual fonts).
+    const outerContours = allContours.filter(pts => _signedArea(pts) < 0);
+    const contours = outerContours.length ? outerContours : allContours;
+
+    // Sort descending by point count; drop any that can't get min 3 pts
     contours.sort((a, b) => b.length - a.length);
     const MAX = 13;
     while (contours.length > 0 && contours.length * 3 > MAX) contours.pop();
@@ -260,10 +264,8 @@ function _convertGlyphOutline(font, ch) {
       const pts = contours[ci];
       const n = allocs[ci];
 
-      // Adaptively simplify to n points using angle-weighted RDP
       const sub = _rdpToCount(pts, n);
 
-      // Remove consecutive duplicates
       const deduped = [sub[0]];
       for (let j = 1; j < sub.length; j++) {
         const p = sub[j], q = deduped[deduped.length - 1];
@@ -271,7 +273,6 @@ function _convertGlyphOutline(font, ch) {
       }
       if (deduped.length < 2) continue;
 
-      // MOVE first, DRAW rest, close contour
       entries.push(deduped[0].gx * 10 + deduped[0].gy);
       for (let j = 1; j < deduped.length && entries.length < MAX; j++)
         entries.push(100 + deduped[j].gx * 10 + deduped[j].gy);
@@ -288,7 +289,6 @@ function _convertGlyphOutline(font, ch) {
   }
 }
 
-// Convert all convertible characters from a loaded opentype font.
 function convertFont(font) {
   const out = DEFAULT_VECTORS.map(v => [...v]);
   for (let idx = 0; idx < CHAR_MAP.length; idx++) {
@@ -304,7 +304,6 @@ function convertFont(font) {
   return out;
 }
 
-// Render the actual TTF glyph onto a canvas tile (image-based display)
 function renderGlyphToCanvas(font, charIndex, canvas) {
   const size = canvas.width;
   const ctx = canvas.getContext('2d');
@@ -326,7 +325,6 @@ function renderGlyphToCanvas(font, charIndex, canvas) {
   } catch (e) {}
 }
 
-// Render vector strokes onto a canvas (fallback when no font loaded, or preview)
 function renderVectorToCanvas(vectors, canvas, opts = {}) {
   const { bgColor = '#1a1a2e', strokeColor = '#00d4ff', dotColor = '#ff6b6b', size = canvas.width } = opts;
   const ctx = canvas.getContext('2d');
