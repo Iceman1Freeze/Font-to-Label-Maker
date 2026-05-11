@@ -223,7 +223,7 @@ function _convertGlyphOutline(font, ch) {
     const SIZE = (GRID + 1) * 8;
     const CELL = SIZE / GRID;
     const cW = bb.x2 - bb.x1, cH = bb.y2 - bb.y1;
-    const scale = (SIZE * 0.85) / Math.max(cW, cH);
+    const scale = (SIZE * 0.9) / Math.max(cW, cH);
     const ox = (SIZE - cW * scale) / 2 - bb.x1 * scale;
     const oy = (SIZE - cH * scale) / 2 + bb.y2 * scale;
 

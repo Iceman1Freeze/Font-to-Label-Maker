@@ -5,7 +5,7 @@ Repo: https://github.com/Iceman1Freeze/Font-to-Label-Maker
 
 ---
 
-## Current Version: V.023
+## Current Version: V.024
 
 ---
 
@@ -104,6 +104,23 @@ DEVLOG.md                    — this file
 - `_convertGlyphOutline(font, ch)` — orchestrates above; allocates 13-point budget
   proportionally across contours (outer + inner counters like in A, B, O)
 - `convertFont` updated to call `_convertGlyphOutline` instead of old raster path
+
+---
+
+### Session 8 — Fix scale mismatch between vector generation and editor background (V.024)
+
+**Root cause of points landing inside the glyph outline instead of on it**
+- `_convertGlyphOutline` used scale = SIZE * 0.85 to place the letter on the 72px canvas
+- `_renderGlyphBackground` (editor.js) renders the reference glyph at size * 0.9
+- The 5% difference meant the vector trace was 94% the size of the displayed outline;
+  every point consistently landed inside the letter boundary rather than on its edge
+- Verified algebraically: when both use the same percentage, the coordinate math
+  produces exact alignment (vector canvas coords = background canvas coords)
+
+**V.024 — Match scale to editor background**
+- Changed `(SIZE * 0.85)` → `(SIZE * 0.9)` in `_convertGlyphOutline`
+- Vector trace now occupies the same 90% of the grid as the editor background glyph
+- Points should now sit on the actual outline corners visible in the editor
 
 ---
 
