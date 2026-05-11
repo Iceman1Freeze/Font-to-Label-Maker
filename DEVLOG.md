@@ -5,7 +5,7 @@ Repo: https://github.com/Iceman1Freeze/Font-to-Label-Maker
 
 ---
 
-## Current Version: V.020
+## Current Version: V.021
 
 ---
 
@@ -104,6 +104,31 @@ DEVLOG.md                    — this file
 - `_convertGlyphOutline(font, ch)` — orchestrates above; allocates 13-point budget
   proportionally across contours (outer + inner counters like in A, B, O)
 - `convertFont` updated to call `_convertGlyphOutline` instead of old raster path
+
+---
+
+### Session 5 — Corner-Protected RDP + Denser Sampling (V.021)
+
+**Problem: Vector traces didn't follow letter outlines closely enough**
+- RDP epsilon search range was [0, 16] — wider than the 9×9 grid diagonal (~11.3 units)
+  causing the binary search to over-simplify when budget was tight
+- Sharp corners (top of A, crossbar ends, serif notches) were unprotected and could be
+  removed by RDP whenever their perpendicular deviation happened to be small
+- Bezier curves sampled at only 4 points per segment, leaving too few points before
+  grid snapping for smooth fonts
+
+**V.021 — Corner-protected RDP + denser bezier sampling**
+- Increased C and Q bezier sampling from 4 to 8 points per segment
+- Added `_getCornerPoints(pts)`: detects points where direction changes ≥ 45°;
+  returns them as a Set of required object references (endpoints always included)
+- Modified `_rdpSimplify(pts, epsilon, required)`: points in `required` receive
+  distance = Infinity so RDP always recurses through them and never discards them
+- Modified `_rdpToCount(pts, n, required)`: reduced epsilon ceiling from 16 → GRID (8);
+  passes required set through to `_rdpSimplify`; added safety slice if result > n
+- `_convertGlyphOutline` now calls `_getCornerPoints` on each snapped contour and
+  passes the result into `_rdpToCount` as the required set
+- No interior-diagonal regression: corner-protected RDP keeps corners as split points
+  and simplifies only the intermediate outline segments between them
 
 ---
 

@@ -128,8 +128,8 @@ function _sampleContour(cmds) {
       cx = cmd.x; cy = cmd.y;
       pts.push({ x: cx, y: cy });
     } else if (cmd.type === 'C') {
-      for (let ti = 1; ti <= 4; ti++) {
-        const t = ti / 4, u = 1 - t;
+      for (let ti = 1; ti <= 8; ti++) {
+        const t = ti / 8, u = 1 - t;
         pts.push({
           x: u*u*u*cx + 3*u*u*t*cmd.x1 + 3*u*t*t*cmd.x2 + t*t*t*cmd.x,
           y: u*u*u*cy + 3*u*u*t*cmd.y1 + 3*u*t*t*cmd.y2 + t*t*t*cmd.y
@@ -137,8 +137,8 @@ function _sampleContour(cmds) {
       }
       cx = cmd.x; cy = cmd.y;
     } else if (cmd.type === 'Q') {
-      for (let ti = 1; ti <= 4; ti++) {
-        const t = ti / 4, u = 1 - t;
+      for (let ti = 1; ti <= 8; ti++) {
+        const t = ti / 8, u = 1 - t;
         pts.push({
           x: u*u*cx + 2*u*t*cmd.x1 + t*t*cmd.x,
           y: u*u*cy + 2*u*t*cmd.y1 + t*t*cmd.y
@@ -152,38 +152,43 @@ function _sampleContour(cmds) {
   return pts;
 }
 
-// Ramer-Douglas-Peucker: reduce pts to essential shape-defining points
-function _rdpSimplify(pts, epsilon) {
+// Ramer-Douglas-Peucker: reduce pts to essential shape-defining points.
+// Points in the optional `required` Set are never removed.
+function _rdpSimplify(pts, epsilon, required = null) {
   if (pts.length <= 2) return pts;
   const { gx: x1, gy: y1 } = pts[0];
   const { gx: x2, gy: y2 } = pts[pts.length - 1];
   const lineLen = Math.hypot(x2 - x1, y2 - y1);
   let maxDist = 0, maxIdx = 0;
   for (let i = 1; i < pts.length - 1; i++) {
+    const isRequired = required && required.has(pts[i]);
     const { gx: px, gy: py } = pts[i];
-    const d = lineLen < 1e-9
-      ? Math.hypot(px - x1, py - y1)
-      : Math.abs((y2 - y1) * px - (x2 - x1) * py + x2 * y1 - y2 * x1) / lineLen;
+    const d = isRequired ? Infinity
+      : lineLen < 1e-9
+        ? Math.hypot(px - x1, py - y1)
+        : Math.abs((y2 - y1) * px - (x2 - x1) * py + x2 * y1 - y2 * x1) / lineLen;
     if (d > maxDist) { maxDist = d; maxIdx = i; }
   }
   if (maxDist <= epsilon) return [pts[0], pts[pts.length - 1]];
   return [
-    ..._rdpSimplify(pts.slice(0, maxIdx + 1), epsilon).slice(0, -1),
-    ..._rdpSimplify(pts.slice(maxIdx), epsilon)
+    ..._rdpSimplify(pts.slice(0, maxIdx + 1), epsilon, required).slice(0, -1),
+    ..._rdpSimplify(pts.slice(maxIdx), epsilon, required)
   ];
 }
 
-// Binary-search for the RDP epsilon that produces exactly n points (or as close as possible)
-function _rdpToCount(pts, n) {
+// Binary-search for the RDP epsilon that produces exactly n points (or as close as possible).
+// Corner points passed via `required` are never removed by RDP.
+function _rdpToCount(pts, n, required = null) {
   if (pts.length <= n) return pts;
-  let lo = 0, hi = 16;
+  let lo = 0, hi = GRID;
   for (let iter = 0; iter < 28; iter++) {
     const mid = (lo + hi) / 2;
-    const len = _rdpSimplify(pts, mid).length;
+    const len = _rdpSimplify(pts, mid, required).length;
     if (len === n) { lo = hi = mid; break; }
     if (len > n) lo = mid; else hi = mid;
   }
-  return _rdpSimplify(pts, (lo + hi) / 2);
+  const result = _rdpSimplify(pts, (lo + hi) / 2, required);
+  return result.length <= n ? result : result.slice(0, n);
 }
 
 function _snapPath(pts, CELL) {
@@ -196,6 +201,24 @@ function _snapPath(pts, CELL) {
     if (key !== lastKey) { result.push({ gx, gy }); lastKey = key; }
   }
   return result;
+}
+
+// Returns a Set of point objects where direction changes by >= 45°.
+// Endpoints are always included as required.
+function _getCornerPoints(pts) {
+  const corners = new Set();
+  if (!pts.length) return corners;
+  corners.add(pts[0]);
+  if (pts.length > 1) corners.add(pts[pts.length - 1]);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
+    const a1 = Math.atan2(cur.gy - prev.gy, cur.gx - prev.gx);
+    const a2 = Math.atan2(next.gy - cur.gy, next.gx - cur.gx);
+    let diff = Math.abs(a2 - a1);
+    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+    if (diff >= Math.PI / 4) corners.add(pts[i]);
+  }
+  return corners;
 }
 
 function _convertGlyphOutline(font, ch) {
@@ -238,8 +261,10 @@ function _convertGlyphOutline(font, ch) {
       const pts = contours[ci];
       const n = allocs[ci];
 
-      // Adaptively simplify to n points using RDP binary search
-      const sub = _rdpToCount(pts, n);
+      // Adaptively simplify to n points using RDP, protecting corner points
+      const corners = _getCornerPoints(pts);
+      const sub = _rdpToCount(pts, n, corners);
+
       // Remove consecutive duplicates
       const deduped = [sub[0]];
       for (let j = 1; j < sub.length; j++) {
